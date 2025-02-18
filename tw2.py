@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -12,13 +13,19 @@ from torch_geometric.data import Data
 from torch_geometric.nn import GCNConv
 from sklearn.decomposition import PCA
 from transformers import pipeline
-from statsmodels.tsa.arima_model import ARIMA
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 import seaborn as sns
 import nltk
 nltk.download('punkt')
 
-# Set device to GPU if available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Force GPU usage if available
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+    print("Using GPU:", torch.cuda.get_device_name(0))
+else:
+    device = torch.device("cpu")
+    print("Warning: Running on CPU!")
 
 # Load the dataset
 df = pd.read_csv('/mnt/data/1976-2020-president.csv')
@@ -84,20 +91,22 @@ for epoch in range(100):
     loss.backward()
     optimizer.step()
 
-# Pre-Poll Prediction using ARIMA
+# Pre-Poll Prediction using SARIMAX
 poll_results = df.groupby('year').agg({'candidatevotes': 'sum', 'totalvotes': 'sum'})
 poll_results['vote_share'] = poll_results['candidatevotes'] / poll_results['totalvotes']
-model_arima = ARIMA(poll_results['vote_share'], order=(5,1,0))
-model_fit = model_arima.fit()
+model_sarimax = SARIMAX(poll_results['vote_share'], order=(5,1,0), seasonal_order=(1,1,0,4))
+model_fit = model_sarimax.fit()
 future_years = np.arange(df['year'].max() + 4, df['year'].max() + 20, 4)
-predicted_vote_share = model_fit.forecast(steps=len(future_years))[0]
+predicted_vote_share = model_fit.forecast(steps=len(future_years))
 
-# Visualizing Pre-Poll Predictions
+# Visualizing Pre-Poll Predictions with Actual Results
 plt.figure(figsize=(12,6))
-sns.lineplot(x=poll_results.index, y=poll_results['vote_share'], label='Historical Vote Share', marker='o')
-sns.lineplot(x=future_years, y=predicted_vote_share, label='Predicted Vote Share', marker='o', linestyle='dashed')
+sns.lineplot(x=poll_results.index, y=poll_results['vote_share'], label='Historical Vote Share', marker='o', linewidth=2)
+sns.lineplot(x=future_years, y=predicted_vote_share, label='Predicted Vote Share', marker='o', linestyle='dashed', linewidth=2)
+plt.axvline(x=df['year'].max(), color='red', linestyle='dotted', label='Last Known Election')
 plt.title('Pre-Poll Prediction vs Actual Election Results')
 plt.xlabel('Year')
 plt.ylabel('Vote Share')
 plt.legend()
+plt.grid(True)
 plt.show()
