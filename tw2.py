@@ -12,8 +12,13 @@ from torch_geometric.data import Data
 from torch_geometric.nn import GCNConv
 from sklearn.decomposition import PCA
 from transformers import pipeline
+from statsmodels.tsa.arima_model import ARIMA
+import seaborn as sns
 import nltk
 nltk.download('punkt')
+
+# Set device to GPU if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load the dataset
 df = pd.read_csv('/mnt/data/1976-2020-president.csv')
@@ -49,9 +54,9 @@ for i, row in df.iterrows():
 node_idx = {node: i for i, node in enumerate(G.nodes())}
 edge_index = torch.tensor([[node_idx[u], node_idx[v]] for u, v in G.edges()], dtype=torch.long).t().contiguous()
 num_nodes = len(G.nodes())
-node_features = torch.rand((num_nodes, 16))  # Placeholder node embeddings
+node_features = torch.rand((num_nodes, 16)).to(device)  # Placeholder node embeddings
 
-data = Data(x=node_features, edge_index=edge_index)
+data = Data(x=node_features, edge_index=edge_index).to(device)
 
 # Define GCN Model
 class GCN(torch.nn.Module):
@@ -66,7 +71,7 @@ class GCN(torch.nn.Module):
         x = self.conv2(x, edge_index)
         return F.log_softmax(x, dim=1)
 
-model = GCN()
+model = GCN().to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
 # Training loop
@@ -74,35 +79,25 @@ for epoch in range(100):
     model.train()
     optimizer.zero_grad()
     out = model(data.x, data.edge_index)
-    labels = torch.randint(0, 3, (num_nodes,))  # Placeholder labels
+    labels = torch.randint(0, 3, (num_nodes,)).to(device)  # Placeholder labels
     loss = F.nll_loss(out, labels)
     loss.backward()
     optimizer.step()
 
-# Visualize Interactive Knowledge Graph
-pos = nx.spring_layout(G)
-node_x, node_y, node_text, node_color = [], [], [], []
-for node in G.nodes():
-    x, y = pos[node]
-    node_x.append(x)
-    node_y.append(y)
-    node_text.append(f"{node} ({G.nodes[node]['node_type']})")
-    node_color.append(0 if G.nodes[node]['node_type'] == 'keyword' else 1)
-node_trace = go.Scatter(
-    x=node_x, y=node_y, mode='markers+text', text=node_text,
-    marker=dict(showscale=True, colorscale='Rainbow', size=15, color=node_color, colorbar=dict(title='Node Type'))
-)
-fig = go.Figure(data=[node_trace])
-fig.update_layout(title="Interactive Knowledge Graph (Tweets & Keywords)", showlegend=False, hovermode='closest')
-fig.show()
+# Pre-Poll Prediction using ARIMA
+poll_results = df.groupby('year').agg({'candidatevotes': 'sum', 'totalvotes': 'sum'})
+poll_results['vote_share'] = poll_results['candidatevotes'] / poll_results['totalvotes']
+model_arima = ARIMA(poll_results['vote_share'], order=(5,1,0))
+model_fit = model_arima.fit()
+future_years = np.arange(df['year'].max() + 4, df['year'].max() + 20, 4)
+predicted_vote_share = model_fit.forecast(steps=len(future_years))[0]
 
-# Visualize GCN embeddings
-embeddings = model(data.x, data.edge_index).detach().numpy()
-pca = PCA(n_components=2)
-embeddings_2d = pca.fit_transform(embeddings)
-plt.figure(figsize=(10, 6))
-plt.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c='blue', alpha=0.6)
-plt.title("Graph Embeddings Visualization after GCN Training")
-plt.xlabel("PCA Component 1")
-plt.ylabel("PCA Component 2")
+# Visualizing Pre-Poll Predictions
+plt.figure(figsize=(12,6))
+sns.lineplot(x=poll_results.index, y=poll_results['vote_share'], label='Historical Vote Share', marker='o')
+sns.lineplot(x=future_years, y=predicted_vote_share, label='Predicted Vote Share', marker='o', linestyle='dashed')
+plt.title('Pre-Poll Prediction vs Actual Election Results')
+plt.xlabel('Year')
+plt.ylabel('Vote Share')
+plt.legend()
 plt.show()
