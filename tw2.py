@@ -94,7 +94,9 @@ for epoch in range(100):
 # Pre-Poll Prediction using SARIMAX
 poll_results = df.groupby('year').agg({'candidatevotes': 'sum', 'totalvotes': 'sum'})
 poll_results['vote_share'] = poll_results['candidatevotes'] / poll_results['totalvotes']
-model_sarimax = SARIMAX(poll_results['vote_share'], order=(5,1,0), seasonal_order=(1,1,0,4))
+
+# Adjust SARIMAX parameters to avoid conflicts
+model_sarimax = SARIMAX(poll_results['vote_share'], order=(2,1,2), seasonal_order=(1,1,1,4))
 model_fit = model_sarimax.fit()
 future_years = np.arange(df['year'].max() + 4, df['year'].max() + 20, 4)
 predicted_vote_share = model_fit.forecast(steps=len(future_years))
